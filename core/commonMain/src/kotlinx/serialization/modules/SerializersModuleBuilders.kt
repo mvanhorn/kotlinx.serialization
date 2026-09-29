@@ -116,8 +116,11 @@ public class SerializersModuleBuilder @PublishedApi internal constructor() : Ser
     /**
      * Adds a default deserializers provider associated with the given [baseClass] to the resulting module.
      * [defaultDeserializerProvider] is invoked when no polymorphic serializers associated with the `className`
-     * in the scope of [baseClass] were found. `className` could be `null` for formats that support nullable class discriminators
-     * (currently only `Json` with `useArrayPolymorphism` set to `false`).
+     * in the scope of [baseClass] were found. `className` could be `null` for formats that support nullable class discriminators.
+     * For `Json`, that is a missing class discriminator when `useArrayPolymorphism` is `false`, and a non-array value
+     * (object, primitive, or `null`) when `useArrayPolymorphism` is `true`. In array mode the returned strategy decodes
+     * that unwrapped value directly. JSON arrays stay the polymorphic envelope: an unknown type name inside an array is
+     * passed as `className`, and the array itself is never reported as a missing discriminator.
      *
      * Default deserializers provider affects only deserialization process. To affect serialization process, use
      * [SerializersModuleBuilder.polymorphicDefaultSerializer].

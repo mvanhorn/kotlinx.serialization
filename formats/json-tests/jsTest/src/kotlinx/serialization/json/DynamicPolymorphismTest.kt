@@ -5,11 +5,17 @@
 package kotlinx.serialization.json
 
 import kotlinx.serialization.*
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DynamicPolymorphismTest {
     @Serializable
@@ -320,5 +326,108 @@ class DynamicPolymorphismTest {
         assertBlock(dynamic)
         val decodedValue = json.decodeFromDynamic(deserializer, dynamic)
         assertEquals(value, decodedValue)
+    }
+
+    @Serializable
+    data class Marked(val before: String, val nested: Sealed, val after: Int)
+
+    @Serializable
+    sealed interface Counted {
+        @Serializable
+        @SerialName("count")
+        data class Count(val n: Int) : Counted
+    }
+
+    @Serializable
+    data class CountHolder(val before: Int, val value: Counted, val after: String)
+
+    private object CountFromInt : DeserializationStrategy<Counted> {
+        override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("CountFromInt", PrimitiveKind.INT)
+        override fun deserialize(decoder: Decoder): Counted = Counted.Count(decoder.decodeInt())
+    }
+
+    @Test
+    fun testArrayPolymorphismDefaultFromDynamic() {
+        val seen = mutableListOf<String?>()
+        val json = Json {
+            useArrayPolymorphism = true
+            serializersModule = SerializersModule {
+                polymorphicDefaultDeserializer(Sealed::class) { name ->
+                    seen += name
+                    Sealed.DataClassChild.serializer()
+                }
+            }
+        }
+
+        val root = json.decodeFromDynamic(Sealed.serializer(), js("""({name: "legacy", intField: 1})"""))
+        assertEquals(Sealed.DataClassChild("legacy"), root)
+        assertEquals(listOf<String?>(null), seen)
+
+        seen.clear()
+        val nested = json.decodeFromDynamic(
+            Marked.serializer(),
+            js("""({before: "b", nested: {name: "child", intField: 1}, after: 9})""")
+        )
+        assertEquals(Marked("b", Sealed.DataClassChild("child"), 9), nested)
+        assertEquals(listOf<String?>(null), seen)
+
+        seen.clear()
+        val fromArray = json.decodeFromDynamic(
+            Sealed.serializer(),
+            js("""(["data_class", {name: "child", intField: 1}])""")
+        )
+        assertEquals(Sealed.DataClassChild("child"), fromArray)
+        assertEquals(emptyList<String?>(), seen)
+
+        seen.clear()
+        val nestedArray = json.decodeFromDynamic(
+            CompositeClass.serializer(),
+            js("""({mark: "m", nested: ["data_class", {name: "child", intField: 1}]})""")
+        )
+        assertEquals(CompositeClass("m", Sealed.DataClassChild("child")), nestedArray)
+        assertEquals(emptyList<String?>(), seen)
+
+        seen.clear()
+        val unknown = json.decodeFromDynamic(
+            Sealed.serializer(),
+            js("""(["nope", {name: "child", intField: 1}])""")
+        )
+        assertEquals(Sealed.DataClassChild("child"), unknown)
+        assertEquals(listOf<String?>("nope"), seen)
+
+        val primitiveSeen = mutableListOf<String?>()
+        val primitiveJson = Json {
+            useArrayPolymorphism = true
+            serializersModule = SerializersModule {
+                polymorphicDefaultDeserializer(Counted::class) { name ->
+                    primitiveSeen += name
+                    if (name == null) CountFromInt else null
+                }
+            }
+        }
+        assertEquals(Counted.Count(42), primitiveJson.decodeFromDynamic(Counted.serializer(), js("42")))
+        assertEquals(listOf<String?>(null), primitiveSeen)
+
+        primitiveSeen.clear()
+        assertEquals(
+            CountHolder(1, Counted.Count(7), "end"),
+            primitiveJson.decodeFromDynamic(CountHolder.serializer(), js("""({before: 1, value: 7, after: "end"})"""))
+        )
+        assertEquals(listOf<String?>(null), primitiveSeen)
+
+        primitiveSeen.clear()
+        assertEquals(
+            Counted.Count(2),
+            primitiveJson.decodeFromDynamic(Counted.serializer(), js("""(["count", {n: 2}])"""))
+        )
+        assertEquals(emptyList<String?>(), primitiveSeen)
+
+        primitiveSeen.clear()
+        // Dynamic decoding does not wrap deserializer failures, unlike string/tree modes.
+        val emptyArray = assertFailsWith<IllegalArgumentException> {
+            primitiveJson.decodeFromDynamic(Counted.serializer(), js("[]"))
+        }
+        assertTrue(emptyArray.message!!.contains("Polymorphic value has not been read for class null"))
+        assertEquals(emptyList<String?>(), primitiveSeen)
     }
 }

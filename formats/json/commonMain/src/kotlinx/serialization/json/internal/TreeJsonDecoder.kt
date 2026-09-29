@@ -65,7 +65,23 @@ private sealed class AbstractJsonTreeDecoder(
     override fun decodeJsonElement(): JsonElement = currentObject()
 
     override fun <T> decodeSerializableValue(deserializer: DeserializationStrategy<T>): T {
-        return withExceptionHandling(path = ::renderTagStack, input = currentObject()::toString) { decodeSerializableValuePolymorphic(deserializer, ::renderTagStack) }
+        return withExceptionHandling(path = ::renderTagStack, input = currentObject()::toString) {
+            /*
+             * Same unwrapped fallback as StreamingJsonDecoder: JSON arrays stay the polymorphic envelope.
+             * Objects, primitives, and null may use the default deserializer with a null class name.
+             */
+            if (deserializer is AbstractPolymorphicSerializer<*> && configuration.useArrayPolymorphism &&
+                currentObject() !is JsonArray
+            ) {
+                @Suppress("UNCHECKED_CAST")
+                val actualSerializer =
+                    deserializer.findPolymorphicSerializerOrNull(this, null) as? DeserializationStrategy<T>
+                if (actualSerializer != null) {
+                    return actualSerializer.deserialize(this)
+                }
+            }
+            decodeSerializableValuePolymorphic(deserializer, ::renderTagStack)
+        }
     }
 
     final override fun composeName(parentName: String, childName: String): String = childName

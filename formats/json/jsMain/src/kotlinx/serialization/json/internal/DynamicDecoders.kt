@@ -68,6 +68,22 @@ private open class DynamicInput(
     }
 
     override fun <T> decodeSerializableValue(deserializer: DeserializationStrategy<T>): T {
+        /*
+         * Same unwrapped fallback as StreamingJsonDecoder. `?:` is intentionally not used: a JSON null
+         * is a real non-array payload, not a missing tag. Arrays stay the polymorphic envelope.
+         */
+        if (deserializer is AbstractPolymorphicSerializer<*> && json.configuration.useArrayPolymorphism) {
+            val tag = currentTagOrNull
+            val currentValue = if (tag == null) value else getByTag(tag)
+            if (!(js("Array.isArray(currentValue)") as Boolean)) {
+                @Suppress("UNCHECKED_CAST")
+                val actualSerializer =
+                    deserializer.findPolymorphicSerializerOrNull(this, null) as? DeserializationStrategy<T>
+                if (actualSerializer != null) {
+                    return actualSerializer.deserialize(this)
+                }
+            }
+        }
         return decodeSerializableValuePolymorphic(deserializer, ::renderTagStack)
     }
 

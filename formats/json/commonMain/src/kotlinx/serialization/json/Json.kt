@@ -647,6 +647,18 @@ public class JsonBuilder internal constructor(json: Json) {
      * `false` by default.
      *
      * This option can only be used if [classDiscriminatorMode] in a default [ClassDiscriminatorMode.POLYMORPHIC] state.
+     *
+     * Polymorphic values are encoded, and decoded, as a two-element JSON array: the class serial name and the value.
+     * Decoding of that array is unchanged, including registered subtypes and unknown subtype names.
+     * When a default deserializer is registered for the base class, a non-array JSON value — object, primitive, or `null` —
+     * is treated as a missing discriminator. The provider is called with a `null` class name and, if it returns a strategy,
+     * that strategy decodes the unwrapped value directly, without a class discriminator.
+     * JSON arrays remain reserved for the polymorphic envelope, so empty, truncated, or otherwise malformed arrays
+     * are not reinterpreted as unwrapped payloads.
+     * Class-discriminator mode (`useArrayPolymorphism` set to `false`) is unaffected.
+     *
+     * @see kotlinx.serialization.modules.PolymorphicModuleBuilder.defaultDeserializer
+     * @see kotlinx.serialization.modules.SerializersModuleBuilder.polymorphicDefaultDeserializer
      */
     public var useArrayPolymorphism: Boolean = json.configuration.useArrayPolymorphism
 

@@ -55,6 +55,27 @@ internal open class StreamingJsonDecoder(
     override fun <T> decodeSerializableValue(deserializer: DeserializationStrategy<T>): T {
         return withExceptionHandling(path = lexer.path::getPath, input = lexer::source) {
             /*
+             * Array polymorphism is `["serialName", value]`. Peek the next token without consuming it so a
+             * legacy non-array payload can be handed to the default deserializer (class name `null`) once.
+             * An opening '[' always stays on that envelope path, including empty or malformed arrays.
+             * The selected strategy reads this decoder directly and does not install a class discriminator.
+             */
+            if (deserializer is AbstractPolymorphicSerializer<*> && json.configuration.useArrayPolymorphism &&
+                lexer.peekNextToken() != TC_BEGIN_LIST
+            ) {
+                @Suppress("UNCHECKED_CAST")
+                val actualSerializer =
+                    deserializer.findPolymorphicSerializerOrNull(this, null) as? DeserializationStrategy<T>
+                if (actualSerializer != null) {
+                    return actualSerializer.deserialize(this)
+                }
+            }
+
+            if (deserializer !is AbstractPolymorphicSerializer<*> || json.configuration.useArrayPolymorphism) {
+                return deserializer.deserialize(this)
+            }
+
+            /*
              * This is an optimized path over decodeSerializableValuePolymorphic(deserializer):
              * dSVP reads the very next JSON tree into a memory as JsonElement and then runs TreeJsonDecoder over it
              * in order to deal with an arbitrary order of keys, but with the price of additional memory pressure
@@ -68,10 +89,6 @@ internal open class StreamingJsonDecoder(
              * 3) Return the value, recover an initial position
              * (*) -- if it doesn't match, fallback to dSVP method.
              */
-            if (deserializer !is AbstractPolymorphicSerializer<*> || json.configuration.useArrayPolymorphism) {
-                return deserializer.deserialize(this)
-            }
-
             val discriminator = deserializer.descriptor.classDiscriminator(json)
             val type = lexer.peekLeadingMatchingValue(discriminator, configuration.isLenient)
                 ?: // Fallback to slow path if we haven't found discriminator on first try
